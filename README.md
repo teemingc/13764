@@ -4,55 +4,68 @@ Minimal reproduction for [sveltejs/kit#13764](https://github.com/sveltejs/kit/is
 
 ## The Problem
 
-When deploying a SvelteKit app that uses `@sveltejs/adapter-vercel` from within a **pnpm monorepo**, the `@vercel/nft` (Node File Trace) tool traces system files from Vercel's build environment, causing serverless function bundles to exceed the 250MB size limit.
+When deploying a SvelteKit app that uses `@sveltejs/adapter-vercel` from within a **pnpm monorepo**, the `@vercel/nft` (Node File Trace) tool traces system files from the build environment, causing serverless function bundles to exceed the 250MB size limit.
 
 ### Root Cause
 
-In `@sveltejs/adapter-vercel/index.js` (~line 661), the `create_function_bundle` function does:
+The issue is a chain of three interacting behaviors:
+
+**1. SvelteKit inlines ALL `process.env` as string constants**
+
+`$env/static/private` compiles every environment variable into a server chunk:
 
 ```javascript
-let base = entry;
-while (base !== (base = path.dirname(base)));
-// base ends up as '/' (filesystem root)
-const traced = await nodeFileTrace([entry], { base });
+const NODE = "/node22/bin/node";
+const PATH = "/uv/bin:/node22/bin:/usr/local/bin:...";
+const HOME = "/vercel";
+// ... every process.env variable
 ```
 
-When `base` is `/` (the filesystem root), NFT traces everything reachable from the filesystem root. On Vercel's build environment, this includes system files:
+**2. Vite merges the env chunk into a shared config chunk**
 
-- `uv/` — Python installation (~13,000+ files)
-- `node22/` — Node.js installation
-- `.vercel/cache/corepack/` — pnpm installation (~476 files)
+When multiple server-side routes import a shared Config module that uses `$env/static/private`, Vite's chunk splitting merges them together. This creates a **namespace object** with shorthand properties:
 
-This results in ~14,600 traced files instead of ~700, pushing the serverless function bundle over 250MB.
+```javascript
+const _private = Object.freeze(Object.defineProperty({
+  __proto__: null,
+  NODE,     // shorthand property — identifier read
+  PATH,     // shorthand property — identifier read
+  HOME,     // shorthand property — identifier read
+  // ...
+}, Symbol.toStringTag, { value: "Module" }));
+```
 
-### Contributing Factors
+**3. NFT treats shorthand properties as identifier reads**
 
-The issue is triggered by a combination of:
+`@vercel/nft`'s `isIdentifierRead()` returns `true` for shorthand `Property` nodes but `false` for `ExportSpecifier` nodes. So:
 
-1. **pnpm monorepo** — pnpm's symlink-based `node_modules` structure causes NFT to follow resolution chains that cross the project boundary on Vercel
-2. **`$env/static/private`** — SvelteKit inlines ALL `process.env` variables as string constants at build time. On Vercel, this includes system paths like `NODE="/node22/bin/node"`, `SHELL`, `COREPACK_ROOT`, etc. NFT may follow these path-like strings as file references
-3. **Complex dependency graphs** — more dependencies means more resolution chains for NFT to follow. The `flags` package (which depends on `jose` for JWT operations) adds crypto-heavy resolution chains that increase the surface area for NFT to trace into system paths
-4. **Vercel's filesystem layout** — system files at `/uv/`, `/node22/`, `.vercel/cache/corepack/` are reachable from `/` and get swept up when NFT traces broadly
+- `export { NODE }` — NFT **ignores** this (no file tracing)
+- `{ NODE }` in Object.freeze — NFT **reads** this, resolves the string `"/node22/bin/node"`, and traces that path
+
+On Vercel's build environment, this sweeps in system directories like `/proc`, `/pnpm10`, `/node24`, producing 250MB+ bundles.
 
 ### Why Only Some Apps Are Affected
 
-This repo has two apps:
+The trigger is specifically **Vite's chunk merging**. A simple app with one route keeps `$env/static/private` in its own chunk with plain `export { ... }` specifiers (which NFT ignores). A realistic app with multiple routes sharing a Config module causes Vite to merge the env module into a shared chunk, generating the namespace object that NFT traces.
 
-- **`app-simple`** — Basic SvelteKit app with shared workspace packages. Should deploy successfully because its dependency graph is simpler, resulting in fewer NFT traces.
-- **`app-with-flags`** — Same setup plus the [`flags`](https://www.npmjs.com/package/flags) npm package. The additional dependency complexity (flags -> jose -> node:crypto bindings) triggers NFT to trace more aggressively into system paths, causing the bundle to exceed 250MB.
+This repo demonstrates this with two apps:
+
+- **`app-simple`** — Basic SvelteKit app with shared workspace packages. Builds clean (~1 MB function).
+- **`app-with-flags`** — Same setup plus the [`flags`](https://www.npmjs.com/package/flags) package and multiple routes importing Config. Triggers NFT to trace system files, producing 250MB+ bundles on Vercel.
 
 ## Repository Structure
 
 ```
 ├── apps/
-│   ├── app-simple/          # SvelteKit app — should deploy successfully
+│   ├── app-simple/          # SvelteKit app — deploys successfully
 │   └── app-with-flags/      # SvelteKit app with flags — exceeds 250MB on Vercel
 ├── packages/
 │   ├── tsconfig/            # Shared TypeScript configs
 │   ├── client-utils/        # Client-side utilities
 │   └── server-libs/         # Server-side libraries (pino, graphql-request)
 ├── scripts/
-│   └── analyze-nft.mjs      # Diagnostic script to inspect NFT trace output
+│   ├── analyze-nft.mjs      # Diagnostic: runs NFT directly on an entry point
+│   └── analyze-build-output.mjs  # Postbuild: logs bundle size and system dirs
 ```
 
 Key characteristics that trigger the issue:
@@ -60,9 +73,9 @@ Key characteristics that trigger the issue:
 - **pnpm catalog** for centralized version management
 - **Turborepo** for build orchestration
 - **Shared workspace packages** with npm dependencies (pino, graphql-request, etc.)
-- **`@vercel/otel`** with experimental instrumentation/tracing enabled
 - **`$env/static/private`** usage (inlines env vars at build time)
-- **`flags` package** (in `app-with-flags`) with `flags/sveltekit` integration
+- **`flags` package** with `flags/sveltekit` integration
+- **Multiple server routes** importing a shared Config module (triggers Vite chunk merging)
 
 ## How to Reproduce
 
@@ -85,91 +98,62 @@ Key characteristics that trigger the issue:
    pnpm install
    ```
 
-3. **Build locally (works fine):**
+3. **Build locally:**
    ```bash
    pnpm build
    ```
-   The local build succeeds because your local filesystem doesn't have the same system files that Vercel's build environment has at `/uv/`, `/node22/`, etc.
+   The `app-with-flags` build will crash during NFT tracing (attempting to trace 188K+ files from local filesystem paths). The `app-simple` build succeeds.
 
 4. **Deploy to Vercel:**
 
-   Option A — Via Vercel Dashboard:
-   - Import the repo on [vercel.com/new](https://vercel.com/new)
-   - Create a project for `apps/app-with-flags`:
-     - Set the root directory to `apps/app-with-flags`
-     - Framework preset: SvelteKit
-     - Node.js version: 22.x
-   - Add environment variable: `ENABLE_EXPERIMENTAL_COREPACK=1`
+   Import the repo on [vercel.com/new](https://vercel.com/new):
+   - Set the root directory to `apps/app-with-flags`
+   - Framework preset: SvelteKit
+   - Node.js version: 22.x
    - Deploy
 
-   Option B — Via Vercel CLI:
-   ```bash
-   cd apps/app-with-flags
-   npx vercel
-   ```
+5. **Observe the results:**
 
-5. **Observe the failure:**
-
-   The `app-with-flags` build will hang at `> Using @sveltejs/adapter-vercel` for 10-15 minutes, then fail with:
-   ```
-   Error: A Serverless Function has exceeded the unzipped maximum size of 250 MB.
-   ```
+   The postbuild analysis script logs bundle details in the Vercel build output:
+   - Handler path with `vercel/path0/` prefix (common ancestor dropped to `/`)
+   - System directories (`proc/`, `pnpm10/`, etc.) bundled into the function
+   - Total bundle size exceeding 250MB
 
 6. **Compare with the simple app:**
 
-   Deploy `apps/app-simple` with the same Vercel settings — it should deploy successfully (or at least produce a significantly smaller bundle).
-
-### Vercel Dashboard Settings
-
-| Setting | Value |
-|---------|-------|
-| Framework | SvelteKit |
-| Node.js Version | 22.x |
-| Package Manager | pnpm (detected from pnpm-lock.yaml) |
-| `ENABLE_EXPERIMENTAL_COREPACK` | `1` |
-| `@sveltejs/adapter-vercel` | ^6.3.0 |
-| `@sveltejs/kit` | ^2.15.0 |
+   Deploy `apps/app-simple` — it deploys successfully with ~1 MB function size.
 
 ## Debugging
 
+### Postbuild analysis (runs automatically)
+
+Both apps run `scripts/analyze-build-output.mjs` after each build, logging:
+- Function size and file count
+- Handler path from `.vc-config.json`
+- Top-level directories in the bundle
+- System directory detection warnings
+
 ### NFT trace analysis
 
-The `scripts/analyze-nft.mjs` script runs `nodeFileTrace` directly on an entry point and shows what gets traced:
+Run NFT directly on an entry point:
 
 ```bash
 node scripts/analyze-nft.mjs apps/app-with-flags/.svelte-kit/vercel-tmp/index.js
 ```
 
-### Adapter debug logging
+### Inspecting the compiled env chunk
 
-To see what NFT is tracing during the build, add debug logging to `node_modules/@sveltejs/adapter-vercel/index.js` in the `create_function_bundle` function:
-
-```javascript
-const traced = await nodeFileTrace([entry], { base });
-
-// Debug: analyze traced files
-const tracedArray = Array.from(traced.fileList);
-console.log(`[NFT Debug] Entry: ${entry}`);
-console.log(`[NFT Debug] Base: ${base}`);
-console.log(`[NFT Debug] Traced files count: ${tracedArray.length}`);
-const outsideProject = tracedArray.filter(f => !f.startsWith('vercel/path0/'));
-console.log(`[NFT Debug] Files outside vercel/path0/: ${outsideProject.length}`);
-console.log(`[NFT Debug] Sample:`, outsideProject.slice(0, 20));
-```
-
-### `$env/static/private` analysis
-
-Check what env vars SvelteKit inlines at build time:
+After building, check how Vite compiled `$env/static/private`:
 
 ```bash
-cat apps/app-with-flags/.svelte-kit/output/server/chunks/private.js
+cat apps/app-with-flags/.svelte-kit/output/server/chunks/config.js
 ```
 
-On Vercel, this file will contain system paths like `NODE="/node22/bin/node"` that NFT may follow.
+Look for the `_private = Object.freeze({ NODE, PATH, ... })` namespace object — this is what triggers NFT.
 
 ## Workaround
 
-A patch that adds an `ignore` callback to `nodeFileTrace` resolves the issue. For **pnpm**, add to `pnpm-workspace.yaml`:
+A patch that adds an `ignore` callback to `nodeFileTrace` resolves the issue. Add to `pnpm-workspace.yaml`:
 
 ```yaml
 patchedDependencies:
@@ -207,12 +191,12 @@ diff --git a/index.js b/index.js
  	const resolution_failures = new Map();
 ```
 
-This reduces traced files from ~14,600 to ~700. See [this comment](https://github.com/sveltejs/kit/issues/13764#issuecomment-3776022492) for the full analysis.
+This reduces traced files from ~14,600 to ~700.
 
 ## Suggested Fix
 
 The `create_function_bundle` function in `@sveltejs/adapter-vercel` should:
 
-1. **Add a default `ignore` callback** to `nodeFileTrace` that excludes known system paths and `.vercel/cache/`
-2. **Detect the Vercel environment** (via the `/vercel/path0/` path prefix) and scope tracing to project files only
+1. **Add a default `ignore` callback** to `nodeFileTrace` that excludes known system paths
+2. **Scope tracing to project files** when running in the Vercel environment
 3. **Optionally expose an `ignore` option** in the adapter config for users to customize
