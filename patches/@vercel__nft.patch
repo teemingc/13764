@@ -1,5 +1,5 @@
 diff --git a/out/utils/ast-helpers.js b/out/utils/ast-helpers.js
-index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..c95e4a44acd9fc37b772b951b4ceadc9ee9dfaba 100644
+index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..0b508494c04affb6cfa0b30e6944bbc2c55888f4 100644
 --- a/out/utils/ast-helpers.js
 +++ b/out/utils/ast-helpers.js
 @@ -25,7 +25,7 @@ function isIdentifierRead(node, parent) {
@@ -7,7 +7,7 @@ index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..c95e4a44acd9fc37b772b951b4ceadc9
          // disregard the `bar` in `export { foo as bar }`
          case 'ExportSpecifier':
 -            return false;
-+            return parent.local.name === parent.exported.name;
++            return node.name === parent.exported.name;
          // disregard the `bar` in `function (bar) {}`
          case 'FunctionExpression':
          case 'FunctionDeclaration':
