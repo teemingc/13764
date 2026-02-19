@@ -1,5 +1,5 @@
 diff --git a/out/analyze.js b/out/analyze.js
-index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..9bdb279b6d98373ae969ef0e667a04b14937b14c 100644
+index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..641b7d2e90f2d96ffa0a25de14e8c208b8d9d742 100644
 --- a/out/analyze.js
 +++ b/out/analyze.js
 @@ -528,6 +528,9 @@ async function analyze(id, code, job) {
@@ -12,6 +12,35 @@ index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..9bdb279b6d98373ae969ef0e667a04b1
                  if ((0, ast_helpers_1.isIdentifierRead)(node, parent) &&
                      job.analysis.computeFileReferences) {
                      let binding;
+@@ -994,6 +997,28 @@ async function analyze(id, code, job) {
+         if (wildcardIndex !== -1 && stats.isFile())
+             return;
+         if (stats.isFile()) {
++                  // do not emit file assets outside job.base
++      if (job.ignoreFn(path_1.relative(job.base, assetPath))) return;
++      // do not emit file assets outside the package boundary if inside node_modules
++      if (pkgBase) {
++        const nodeModulesBase =
++          id.substring(0, id.indexOf(path_1.sep + 'node_modules')) +
++          path_1.sep +
++          'node_modules' +
++          path_1.sep;
++        if (!assetPath.startsWith(nodeModulesBase)) {
++          if (job.log)
++            console.log(
++              'Skipping asset emission of ' +
++                assetPath +
++                ' for ' +
++                id +
++                ' as it is outside the package base ' +
++                pkgBase,
++            );
++          return;
++        }
++      }
+             assets.add(assetPath);
+         }
+         else if (stats.isDirectory()) {
 diff --git a/out/utils/ast-helpers.js b/out/utils/ast-helpers.js
 index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..0b508494c04affb6cfa0b30e6944bbc2c55888f4 100644
 --- a/out/utils/ast-helpers.js
