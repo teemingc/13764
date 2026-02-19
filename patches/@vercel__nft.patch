@@ -1,5 +1,5 @@
 diff --git a/out/analyze.js b/out/analyze.js
-index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..aebcbb3935135818a28911343b3ae88dd9118804 100644
+index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..9bdb279b6d98373ae969ef0e667a04b14937b14c 100644
 --- a/out/analyze.js
 +++ b/out/analyze.js
 @@ -528,6 +528,9 @@ async function analyze(id, code, job) {
@@ -7,23 +7,20 @@ index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..aebcbb3935135818a28911343b3ae88d
                  return;
              if (node.type === 'Identifier') {
 +                if (node.name === 'NODE') {
-+                    console.log({ computeFileReferences: job.analysis.computeFileReferences })
++                    console.log({ node, parent, computeFileReferences: job.analysis.computeFileReferences })
 +                }
                  if ((0, ast_helpers_1.isIdentifierRead)(node, parent) &&
                      job.analysis.computeFileReferences) {
                      let binding;
 diff --git a/out/utils/ast-helpers.js b/out/utils/ast-helpers.js
-index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..82e6946930060cbb65b1b9b047ef9c0a566c0459 100644
+index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..0b508494c04affb6cfa0b30e6944bbc2c55888f4 100644
 --- a/out/utils/ast-helpers.js
 +++ b/out/utils/ast-helpers.js
-@@ -25,7 +25,10 @@ function isIdentifierRead(node, parent) {
+@@ -25,7 +25,7 @@ function isIdentifierRead(node, parent) {
              return parent.id !== node;
          // disregard the `bar` in `export { foo as bar }`
          case 'ExportSpecifier':
 -            return false;
-+            if (node.name === 'NODE') {
-+                console.log(node.name, parent.exported.name);
-+            }
 +            return node.name === parent.exported.name;
          // disregard the `bar` in `function (bar) {}`
          case 'FunctionExpression':
