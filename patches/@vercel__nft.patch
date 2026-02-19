@@ -1,3 +1,17 @@
+diff --git a/out/analyze.js b/out/analyze.js
+index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..aebcbb3935135818a28911343b3ae88dd9118804 100644
+--- a/out/analyze.js
++++ b/out/analyze.js
+@@ -528,6 +528,9 @@ async function analyze(id, code, job) {
+             if (!parent)
+                 return;
+             if (node.type === 'Identifier') {
++                if (node.name === 'NODE') {
++                    console.log({ computeFileReferences: job.analysis.computeFileReferences })
++                }
+                 if ((0, ast_helpers_1.isIdentifierRead)(node, parent) &&
+                     job.analysis.computeFileReferences) {
+                     let binding;
 diff --git a/out/utils/ast-helpers.js b/out/utils/ast-helpers.js
 index 72479bdd04d4f27b4cac53d87ce0c588bb1b8df8..82e6946930060cbb65b1b9b047ef9c0a566c0459 100644
 --- a/out/utils/ast-helpers.js
