@@ -1,18 +1,8 @@
 diff --git a/out/analyze.js b/out/analyze.js
-index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..641b7d2e90f2d96ffa0a25de14e8c208b8d9d742 100644
+index 948bb0dec5453dfffa3eebcfe7ee1080c7b2071a..ad0f6dba9f4a2b8f4836fe2cc6e7e708fa79ba65 100644
 --- a/out/analyze.js
 +++ b/out/analyze.js
-@@ -528,6 +528,9 @@ async function analyze(id, code, job) {
-             if (!parent)
-                 return;
-             if (node.type === 'Identifier') {
-+                if (node.name === 'NODE') {
-+                    console.log({ node, parent, computeFileReferences: job.analysis.computeFileReferences })
-+                }
-                 if ((0, ast_helpers_1.isIdentifierRead)(node, parent) &&
-                     job.analysis.computeFileReferences) {
-                     let binding;
-@@ -994,6 +997,28 @@ async function analyze(id, code, job) {
+@@ -994,6 +994,28 @@ async function analyze(id, code, job) {
          if (wildcardIndex !== -1 && stats.isFile())
              return;
          if (stats.isFile()) {

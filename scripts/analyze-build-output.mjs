@@ -21,6 +21,8 @@ if (!fs.existsSync(outputDir)) {
   process.exit(0);
 }
 
+console.log(process.env)
+
 // Find all .func directories
 function findFuncDirs(dir) {
   const results = [];
