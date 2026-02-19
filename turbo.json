@@ -3,8 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".svelte-kit/**", ".vercel/**"],
-      "cache": false
+      "inputs": ["pnpm-workspace.yaml", "pnpm-lock.yaml"]
     },
     "dev": {
       "cache": false,
