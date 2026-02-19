@@ -19,8 +19,5 @@ catalog:
 onlyBuiltDependencies:
   - esbuild
 
-overrides:
-  '@vercel/nft': ^1.3.1
-
 patchedDependencies:
-  '@vercel/nft': patches/@vercel__nft.patch
+  '@sveltejs/adapter-vercel': patches/@sveltejs__adapter-vercel.patch
